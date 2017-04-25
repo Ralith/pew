@@ -52,7 +52,8 @@ impl Barrel {
             bullet_linear_velocity: v,
             // w = sqrt(2KEr/I)
             bullet_angular_velocity: f32::consts::SQRT_2 * (ke_r/cartridge.bullet.inertia_around_axis()).sqrt(),
-            muzzle_blast_temperature: final_temperature,
+            // U = cNT
+            muzzle_blast_energy: 1000. * cartridge.powder.products.specific_heat_capacity_cv * powder_mass * final_temperature,
         }
 
         // // We model gunpowder as yielding mostly triatomic gas when burned, so the heat capacity ratio is:
@@ -90,8 +91,8 @@ pub struct Firing {
     pub bullet_linear_velocity: f32,
     /// rad/s
     pub bullet_angular_velocity: f32,
-    /// K
-    pub muzzle_blast_temperature: f32,
+    /// J
+    pub muzzle_blast_energy: f32,
 }
 
 #[derive(Debug, Copy, Clone)]
