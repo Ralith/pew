@@ -121,6 +121,8 @@ pub enum MagazineType {
 pub struct Magazine {
     pub ty: MagazineType,
     pub capacity: u16,
+    pub cartridge_radius: f32,
+    pub cartridge_length: f32,
 }
 
 #[derive(Debug, Copy, Clone)]
