@@ -14,8 +14,18 @@ pub struct Barrel {
     pub chamber_body_length: f32,
 }
 
-impl Barrel {
-    pub fn fire(&self, cartridge: &Cartridge) -> Firing {
+#[derive(Debug, Copy, Clone)]
+pub struct Firing {
+    /// m/s
+    pub bullet_linear_velocity: f32,
+    /// rad/s
+    pub bullet_angular_velocity: f32,
+    /// J
+    pub muzzle_blast_energy: f32,
+}
+
+impl Firing {
+    pub fn adiabatic(cartridge: &Cartridge, barrel: &Barrel) -> Self {
         const R: f32 = 8.3144598;
         const STANDARD_TEMPERATURE: f32 = 293.15;
 
@@ -27,13 +37,14 @@ impl Barrel {
         let initial_pressure = cartridge.powder.density * quantity_per_mass * R * initial_temperature;
         let gamma = cartridge.powder.products.heat_capacity_ratio;
         let k = initial_pressure * cartridge.internal_volume().powf(gamma);
-        let final_volume = cartridge.internal_volume() + f32::consts::PI * self.bore_radius * self.bore_radius * self.bore_length;
+        let final_volume = cartridge.internal_volume() + f32::consts::PI * barrel.bore_radius * barrel.bore_radius * barrel.bore_length;
         let final_pressure = k / final_volume.powf(gamma);
         let n = quantity_per_mass * powder_mass;
         // T = PV/(nR)
         let final_temperature = final_pressure * final_volume / (n * R);
 
         let work = k * (final_volume.powf(1.-gamma) - cartridge.internal_volume().powf(1.-gamma)) / (1.-gamma);
+        let bullet_mass = cartridge.bullet.mass();
 
         // KE = KEl + KEr
         // KEr = 0.5 * I * w^2
@@ -42,12 +53,12 @@ impl Barrel {
 
         // KE = 0.5 * I * (2 pi v / twist)^2 + 0.5 * m * v^2
         // Solve for v:
-        let v = f32::consts::SQRT_2 * self.rifling_twist *
+        let v = f32::consts::SQRT_2 * barrel.rifling_twist *
             (work
-             / (cartridge.bullet.mass() * self.rifling_twist*self.rifling_twist
+             / (bullet_mass * barrel.rifling_twist*barrel.rifling_twist
                 + 4. * f32::consts::PI * f32::consts::PI * cartridge.bullet.inertia_around_axis())).sqrt();
 
-        let ke_r = work - 0.5 * cartridge.bullet.mass() * v * v;
+        let ke_r = work - 0.5 * bullet_mass * v * v;
         Firing {
             bullet_linear_velocity: v,
             // w = sqrt(2KEr/I)
@@ -86,13 +97,9 @@ impl Barrel {
 }
 
 #[derive(Debug, Copy, Clone)]
-pub struct Firing {
-    /// m/s
-    pub bullet_linear_velocity: f32,
-    /// rad/s
-    pub bullet_angular_velocity: f32,
-    /// J
-    pub muzzle_blast_energy: f32,
+pub struct Suppressor {
+    pub length: f32,
+    pub volume: f32,
 }
 
 #[derive(Debug, Copy, Clone)]
