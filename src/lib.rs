@@ -1,6 +1,12 @@
 //! Unless otherwise documented, units are: m, kg, s
 
+pub mod adiabatic;
+pub mod numerical;
+
 use std::f32;
+
+const R: f32 = 8.3144598;
+const STANDARD_TEMPERATURE: f32 = 293.15;
 
 #[derive(Debug, Copy, Clone)]
 pub struct Barrel {
@@ -8,92 +14,28 @@ pub struct Barrel {
     pub bore_radius: f32,
     /// distance traveled by the bullet from firing to exiting the barrel
     pub bore_length: f32,
-    /// meters per turn
-    pub rifling_twist: f32,
+    /// radians, [0, pi/2)
+    pub rifling_angle: f32,
     pub chamber_body_radius: f32,
     pub chamber_body_length: f32,
 }
 
-#[derive(Debug, Copy, Clone)]
-pub struct Firing {
-    /// m/s
-    pub bullet_linear_velocity: f32,
-    /// rad/s
-    pub bullet_angular_velocity: f32,
-    /// J
-    pub muzzle_blast_energy: f32,
+impl Barrel {
+    pub fn chamber_volume(&self) -> f32 {
+        f32::consts::PI * self.chamber_body_radius * self.chamber_body_radius * self.chamber_body_length
+    }
 }
 
-impl Firing {
-    pub fn adiabatic(cartridge: &Cartridge, barrel: &Barrel) -> Self {
-        const R: f32 = 8.3144598;
-        const STANDARD_TEMPERATURE: f32 = 293.15;
+/// radians, radius -> meters per turn
+pub fn rifling_travel(angle: f32, radius: f32) -> f32 {
+    let circumference = 2. * f32::consts::PI * radius;
+    circumference / angle.tan()
+}
 
-        // U = cNT; T = U/(cN)
-        let powder_mass = cartridge.internal_volume() * cartridge.powder.density;
-        let initial_temperature = STANDARD_TEMPERATURE + (cartridge.powder.heat_of_combustion * powder_mass) / (cartridge.powder.products.specific_heat_capacity_cv * powder_mass);
-        let quantity_per_mass = 1. / cartridge.powder.products.molar_mass;
-        // P = nRT/V, factor out volume
-        let initial_pressure = cartridge.powder.density * quantity_per_mass * R * initial_temperature;
-        let gamma = cartridge.powder.products.heat_capacity_ratio;
-        let k = initial_pressure * cartridge.internal_volume().powf(gamma);
-        let final_volume = cartridge.internal_volume() + f32::consts::PI * barrel.bore_radius * barrel.bore_radius * barrel.bore_length;
-        let final_pressure = k / final_volume.powf(gamma);
-        let n = quantity_per_mass * powder_mass;
-        // T = PV/(nR)
-        let final_temperature = final_pressure * final_volume / (n * R);
-
-        let work = k * (final_volume.powf(1.-gamma) - cartridge.internal_volume().powf(1.-gamma)) / (1.-gamma);
-        let bullet_mass = cartridge.bullet.mass();
-
-        // KE = KEl + KEr
-        // KEr = 0.5 * I * w^2
-        // KEl = 0.5 * m * v^2
-        // 2 pi v / twist = w
-
-        // KE = 0.5 * I * (2 pi v / twist)^2 + 0.5 * m * v^2
-        // Solve for v:
-        let v = f32::consts::SQRT_2 * barrel.rifling_twist *
-            (work
-             / (bullet_mass * barrel.rifling_twist*barrel.rifling_twist
-                + 4. * f32::consts::PI * f32::consts::PI * cartridge.bullet.inertia_around_axis())).sqrt();
-
-        let ke_r = work - 0.5 * bullet_mass * v * v;
-        Firing {
-            bullet_linear_velocity: v,
-            // w = sqrt(2KEr/I)
-            bullet_angular_velocity: f32::consts::SQRT_2 * (ke_r/cartridge.bullet.inertia_around_axis()).sqrt(),
-            // U = cNT
-            muzzle_blast_energy: 1000. * cartridge.powder.products.specific_heat_capacity_cv * powder_mass * final_temperature,
-        }
-
-        // // We model gunpowder as yielding mostly triatomic gas when burned, so the heat capacity ratio is:
-        // const GAMMA: f32 = 1.+2./7.;
-
-        // // g/mol
-        // const NITROCELLULOSE_MOLAR_MASS: f32 = 297.1333;
-        // const O2_MOLAR_MASS: f32 = 31.99880;
-        // const CO2_MOLAR_MASS: f32 = 44.0095;
-        // const N2_MOLAR_MASS: f32 = 28.0134;
-        // const H2O_MOLAR_MASS: f32 = 18.01528;
-
-        // // nitrocellulose combustion: 4 C6H7N3O11 + 9 O2 ⟶ 24 CO2 + 6 N2 + 14 H2O
-        // const NITROCELLULOSE_QUANTITY: f32 = 4;
-        // const O2_QUANTITY: f32 = 9.;
-        // const CO2_QUANTITY: f32 = 24.;
-        // const N2_QUANTITY: f32 = 6.;
-        // const H2O_QUANTITY: f32 = 14.;
-        // const MIXTURE_QUANTITY: f32 = CO2_QUANTITY + N2_QUANTITY + H2O_QUANTITY;
-
-        // // kg
-        // const TOTAL_MASS: f32 = NITROCELLULOSE_QUANTITY * NITROCELLULOSE_MOLAR_MASS + O2_QUANTITY * O2_MOLAR_MASS * .001;
-
-        // const MIXTURE_PER_MASS: f32 = MIXTURE_QUANTITY / TOTAL_MASS;
-
-        // let powder_mass = cartridge.internal_volume() * POWDER_DENSITY;
-        // let initial_temperature = NITROCELLULOSE_HEAT_OF_COMBUSTION * powder_mass
-        // let initial_pressure = POWDER_DENSITY * MIXTURE_PER_MASS * R * initial_temperature; // P = nRT/V, factor out volume
-    }
+/// meters per turn, radius -> radians
+pub fn rifling_angle(travel: f32, radius: f32) -> f32 {
+    let circumference = 2. * f32::consts::PI * radius;
+    (circumference/travel).atan()
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -136,13 +78,21 @@ pub struct Magazine {
 pub struct Cartridge {
     pub bullet: Bullet,
     pub powder: Powder,
+    /// kg of powder
+    pub charge: f32,
     pub body_internal_radius: f32,
     pub body_length: f32,
 }
 
 impl Cartridge {
-    pub fn internal_volume(&self) -> f32 {
+    pub fn body_volume(&self) -> f32 {
         f32::consts::PI * self.body_internal_radius * self.body_internal_radius * self.body_length
+    }
+
+    pub fn body_internal_surface_area(&self) -> f32 {
+        f32::consts::PI * self.body_internal_radius *
+            (self.body_internal_radius // end cap
+             + 2. * self.body_length)   // body
     }
 }
 
@@ -150,7 +100,7 @@ impl Cartridge {
 pub struct Powder {
     /// kg/m^3
     pub density: f32,
-    /// kJ/kg
+    /// J/kg
     pub heat_of_combustion: f32,
 
     pub products: Gas,
@@ -159,7 +109,7 @@ pub struct Powder {
 #[derive(Debug, Copy, Clone)]
 pub struct Gas {
     pub heat_capacity_ratio: f32,
-    /// kJ/(kg K)
+    /// J/(kg K)
     pub specific_heat_capacity_cv: f32,
     /// kg/mol
     pub molar_mass: f32,
